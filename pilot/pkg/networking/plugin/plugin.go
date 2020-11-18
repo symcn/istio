@@ -28,6 +28,8 @@ const (
 	Authz = "authz"
 	// Health is the name of the health plugin passed through the command line
 	Health = "health"
+	// HttpMx is the name of the HTTP metadata exchange plugin pass through the command line
+	HttpMx = "http_mx"
 )
 
 // InputParams is a set of values passed to Plugin callback methods. Not all fields are guaranteed to
