@@ -69,3 +69,8 @@ export GOBIN ?= $(GOPATH)/bin
 include Makefile.core.mk
 
 endif
+
+istiod:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./pilot/cmd/pilot-discovery
+	docker build -t symcn.tencentcloudcr.com/symcn/pilot:1.7.5 .
+	docker push symcn.tencentcloudcr.com/symcn/pilot:1.7.5

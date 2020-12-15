@@ -568,6 +568,11 @@ func (s *ServiceEntryStore) maybeRefreshIndexes() {
 		}
 	}
 
+	entrisWithName := make(map[string]servicesWithEntry, len(seWithSelectorByNamespace["sym-admin"]))
+	for _, se := range seWithSelectorByNamespace["sym-admin"] {
+		entrisWithName[se.entry.WorkloadSelector.Labels["service"]] = se
+	}
+
 	// We need to take a full lock here, rather than just a read lock and then later updating s.instances
 	// otherwise, what may happen is both the refresh thread and workload entry/pod handler both generate their own
 	// view of s.instances and then write them, leading to inconsistent state. This lock ensures that both threads do
@@ -582,17 +587,22 @@ func (s *ServiceEntryStore) maybeRefreshIndexes() {
 
 		instances := []*model.ServiceInstance{}
 		// We will only select entries in the same namespace
-		entries := seWithSelectorByNamespace[workloadInstance.Namespace]
-		for _, se := range entries {
-			workloadLabels := labels.Collection{workloadInstance.Endpoint.Labels}
-			if !workloadLabels.IsSupersetOf(se.entry.WorkloadSelector.Labels) {
-				// Not a match, skip this one
-				continue
-			}
+		// entries := seWithSelectorByNamespace[workloadInstance.Namespace]
+		// for _, se := range entries {
+		//     workloadLabels := labels.Collection{workloadInstance.Endpoint.Labels}
+		//     if !workloadLabels.IsSupersetOf(se.entry.WorkloadSelector.Labels) {
+		//         // Not a match, skip this one
+		//         continue
+		//     }
+		//     instance := convertWorkloadInstanceToServiceInstance(workloadInstance.Endpoint, se.services, se.entry)
+		//     instances = append(instances, instance...)
+		// }
+		// updateInstances(key, instances, di, dip)
+		if se, ok := entrisWithName[workloadInstance.Endpoint.Labels["service"]]; ok {
 			instance := convertWorkloadInstanceToServiceInstance(workloadInstance.Endpoint, se.services, se.entry)
 			instances = append(instances, instance...)
+			updateInstances(key, instances, di, dip)
 		}
-		updateInstances(key, instances, di, dip)
 	}
 
 	wles, err := s.store.List(gvk.WorkloadEntry, model.NamespaceAll)
@@ -608,13 +618,16 @@ func (s *ServiceEntryStore) maybeRefreshIndexes() {
 			namespace: wcfg.Namespace,
 		}
 		// We will only select entries in the same namespace
-		entries := seWithSelectorByNamespace[wcfg.Namespace]
-		for _, se := range entries {
-			workloadLabels := labels.Collection{wle.Labels}
-			if !workloadLabels.IsSupersetOf(se.entry.WorkloadSelector.Labels) {
-				// Not a match, skip this one
-				continue
-			}
+		// entries := seWithSelectorByNamespace[wcfg.Namespace]
+		// for _, se := range entries {
+		//     workloadLabels := labels.Collection{wle.Labels}
+		//     if !workloadLabels.IsSupersetOf(se.entry.WorkloadSelector.Labels) {
+		//         // Not a match, skip this one
+		//         continue
+		//     }
+		//     updateInstances(key, convertWorkloadEntryToServiceInstances(wle, se.services, se.entry), di, dip)
+		// }
+		if se, ok := entrisWithName[wle.Labels["service"]]; ok {
 			updateInstances(key, convertWorkloadEntryToServiceInstances(wle, se.services, se.entry), di, dip)
 		}
 	}
