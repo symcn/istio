@@ -30,6 +30,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/cache"
 
 	meshconfig "istio.io/api/mesh/v1alpha1"
 	"istio.io/istio/pilot/pkg/config/kube/ingress"
@@ -69,6 +70,10 @@ type FakeOptions struct {
 	// If provided, this mesh config will be used
 	MeshConfig      *meshconfig.MeshConfig
 	NetworksWatcher mesh.NetworksWatcher
+
+	// Time to debounce
+	// By default, set to 0s to speed up tests
+	DebounceTime time.Duration
 }
 
 type FakeDiscoveryServer struct {
@@ -94,6 +99,9 @@ func NewFakeDiscoveryServer(t test.Failer, opts FakeOptions) *FakeDiscoveryServe
 
 	// Init with a dummy environment, since we have a circular dependency with the env creation.
 	s := NewDiscoveryServer(&model.Environment{PushContext: model.NewPushContext()}, []string{plugin.AuthzCustom, plugin.Authn, plugin.Authz}, "pilot-123")
+	t.Cleanup(func() {
+		s.Shutdown()
+	})
 
 	serviceHandler := func(svc *model.Service, _ model.Event) {
 		pushReq := &model.PushRequest{
@@ -122,6 +130,9 @@ func NewFakeDiscoveryServer(t test.Failer, opts FakeOptions) *FakeDiscoveryServe
 			XDSUpdater:      s,
 			NetworksWatcher: opts.NetworksWatcher,
 			Mode:            opts.KubernetesEndpointMode,
+			// we wait for the aggregate to sync
+			SkipCacheSyncWait: true,
+			Stop:              stop,
 		})
 		// start default client informers after creating ingress/secret controllers
 		if defaultKubeClient == nil || cluster == "Kubernetes" {
@@ -133,7 +144,7 @@ func NewFakeDiscoveryServer(t test.Failer, opts FakeOptions) *FakeDiscoveryServe
 		registries = append(registries, k8s)
 	}
 
-	sc := kubesecrets.NewMulticluster(defaultKubeClient, "", "")
+	sc := kubesecrets.NewMulticluster(defaultKubeClient, "", "", stop)
 	s.Generators[v3.SecretType] = NewSecretGen(sc, &model.DisabledCache{})
 	defaultKubeClient.RunAndWait(stop)
 
@@ -157,7 +168,7 @@ func NewFakeDiscoveryServer(t test.Failer, opts FakeOptions) *FakeDiscoveryServe
 	s.updateMutex.Lock()
 	s.Env = cg.Env()
 	// Disable debounce to reduce test times
-	s.debounceOptions.debounceAfter = 0
+	s.debounceOptions.debounceAfter = opts.DebounceTime
 	s.MemRegistry = cg.MemRegistry
 	s.MemRegistry.EDSUpdater = s
 	s.updateMutex.Unlock()
@@ -215,11 +226,13 @@ func NewFakeDiscoveryServer(t test.Failer, opts FakeOptions) *FakeDiscoveryServe
 	t.Cleanup(func() {
 		grpcServer.Stop()
 	})
-
-	cg.ServiceEntryRegistry.XdsUpdater = s
 	// Start the discovery server
-	s.CachesSynced()
 	s.Start(stop)
+	cg.ServiceEntryRegistry.XdsUpdater = s
+	cache.WaitForCacheSync(stop,
+		cg.Registry.HasSynced,
+		cg.Store().HasSynced)
+	s.CachesSynced()
 	cg.ServiceEntryRegistry.ResyncEDS()
 
 	// Now that handlers are added, get everything started
